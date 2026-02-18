@@ -1,39 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { StyleSheet, View, Text, StatusBar, SafeAreaView } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
-import { VideoView } from './components/VideoView';
+import { MjpegView } from './components/MjpegView';
 import { DetectionOverlay } from './components/DetectionOverlay';
-import TelemetryDashboard from './components/TelemetryDashboard'; // Correction: default export
-import ControlPanel from './components/ControlPanel'; // Correction: default export
-import MapDashboard from './components/MapDashboard'; // Correction: default export
-import { WebRTCClient } from './webrtc/peer';
+import TelemetryDashboard from './components/TelemetryDashboard';
+import ControlPanel from './components/ControlPanel';
+import MapDashboard from './components/MapDashboard';
 import { useAppStore } from './store/useAppStore';
 
-// Initialize WebRTC Client Singleton
-// In a real app, might want to do this in a useEffect or Context, but singleton is fine for this scope.
-// Assuming signaling server is at a fixed IP.
-const SIGNALING_URL = 'ws://192.168.4.1:8080'; // Example Pi IP in AP mode
-const rtcClient = new WebRTCClient(SIGNALING_URL);
+// Pi MJPEG server
+const PI_URL = "http://10.165.71.121:8080";
 
 export default function App() {
-    useKeepAwake(); // Prevent screen sleep
-    const [remoteStream, setRemoteStream] = useState<any>(null);
-    const connectionStatus = useAppStore(state => state.connectionStatus);
-
-    useEffect(() => {
-        rtcClient.onRemoteStream = (stream) => {
-            setRemoteStream(stream);
-        };
-        rtcClient.connect();
-    }, []);
+    useKeepAwake();
 
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar hidden />
 
-            {/* 1. Video Layer (Background) */}
+            {/* 1. Video Layer — MJPEG Stream */}
             <View style={styles.videoLayer}>
-                <VideoView stream={remoteStream} />
+                <MjpegView url={PI_URL} />
             </View>
 
             {/* 2. Detection Layer (Over Video) */}
@@ -46,8 +33,8 @@ export default function App() {
 
                 {/* Top Bar: Connection Status */}
                 <View style={styles.topBar}>
-                    <View style={[styles.statusDot, { backgroundColor: connectionStatus === 'connected' ? '#0F0' : '#F00' }]} />
-                    <Text style={styles.statusText}>{connectionStatus.toUpperCase()}</Text>
+                    <View style={[styles.statusDot, { backgroundColor: '#0F0' }]} />
+                    <Text style={styles.statusText}>MJPEG LIVE</Text>
                 </View>
 
                 {/* Left Panel: Telemetry */}

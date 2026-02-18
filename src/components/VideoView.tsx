@@ -7,6 +7,7 @@ interface VideoViewProps {
 }
 
 export const VideoView: React.FC<VideoViewProps> = ({ stream }) => {
+    console.log("VideoView stream:", stream ? stream.toURL() : "null");
     if (!stream) {
         return <View style={styles.container} />; // Placeholder black screen
     }
@@ -18,6 +19,7 @@ export const VideoView: React.FC<VideoViewProps> = ({ stream }) => {
                 style={styles.video}
                 objectFit="cover"
                 mirror={false}
+                zOrder={1}
             />
         </View>
     );
