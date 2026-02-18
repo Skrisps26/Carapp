@@ -25,7 +25,7 @@ VIDEO_DEVICE = "/dev/video0"
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 360
 FPS = 30
-JPEG_QUALITY = 50
+JPEG_QUALITY = 40
 CONE_INPUT_SIZE = 320
 POTHOLE_INPUT_SIZE = 256
 
@@ -53,6 +53,8 @@ detection_lock = threading.Lock()
 latest_frame = None
 latest_jpeg = None
 frame_lock = threading.Lock()
+frame_seq = 0          # incremented every time a new frame is written
+frame_event = threading.Event()  # signals waiters that a new frame is ready
 
 # TFLite interpreters (ai-edge-litert)
 cone_interp = None
@@ -133,8 +135,12 @@ def camera_loop():
         _, jpeg_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
 
         with frame_lock:
+            global frame_seq
             latest_frame = frame
             latest_jpeg = jpeg_buf.tobytes()
+            frame_seq += 1
+        frame_event.set()   # wake any waiting stream coroutines
+        frame_event.clear()
 
         elapsed = time.monotonic() - t0
         sleep_time = frame_interval - elapsed
@@ -354,35 +360,46 @@ async def handle_stream(request):
         headers={
             "Content-Type": f"multipart/x-mixed-replace; boundary={boundary}",
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Connection": "close",
+            "Connection": "keep-alive",
         },
     )
     response.enable_chunked_encoding()
     await response.prepare(request)
 
     logger.info("Client connected to /stream")
-    frame_interval = 1.0 / FPS
+    last_seq = -1
 
     try:
         while True:
+            # Wait up to 100ms for a new frame — avoids busy-spin
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: frame_event.wait(timeout=0.1)
+            )
+
             with frame_lock:
                 jpeg = latest_jpeg
+                seq = frame_seq
 
-            if jpeg is None:
-                await asyncio.sleep(0.05)
-                continue
+            if jpeg is None or seq == last_seq:
+                continue  # no new frame yet
 
-            await response.write(
-                f"--{boundary}\r\n"
-                f"Content-Type: image/jpeg\r\n"
-                f"Content-Length: {len(jpeg)}\r\n"
-                f"\r\n".encode()
-                + jpeg
-                + b"\r\n"
-            )
-            await response.drain()
-            await asyncio.sleep(frame_interval)
+            last_seq = seq
+
+            # Write the frame — no drain() to avoid TCP backpressure stall
+            try:
+                await response.write(
+                    f"--{boundary}\r\n"
+                    f"Content-Type: image/jpeg\r\n"
+                    f"Content-Length: {len(jpeg)}\r\n"
+                    f"\r\n".encode()
+                    + jpeg
+                    + b"\r\n"
+                )
+            except (ConnectionResetError, ConnectionError, ConnectionAbortedError):
+                break
     except (ConnectionResetError, ConnectionError, ConnectionAbortedError):
+        pass
+    finally:
         logger.info("Client disconnected")
     return response
 
