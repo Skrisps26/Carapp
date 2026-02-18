@@ -1,68 +1,105 @@
 import { act } from '@testing-library/react-native';
-import { WebRTCClient } from '../src/webrtc/peer';
 import { useAppStore } from '../src/store/useAppStore';
 
-// Mock WebRTC
-// Mock WebRTC
-jest.mock('react-native-webrtc', () => ({
-    RTCPeerConnection: jest.fn().mockImplementation(() => {
-        let iceCallback: (() => void) | null = null;
-        return {
-            onicecandidate: null,
-            ontrack: null,
-            ondatachannel: null,
-            addTransceiver: jest.fn(),
-            createOffer: jest.fn(() => Promise.resolve({ sdp: 'mock-offer', type: 'offer' })),
-            setLocalDescription: jest.fn(() => Promise.resolve()),
-            setRemoteDescription: jest.fn(() => Promise.resolve()),
-            localDescription: { sdp: 'mock-offer-complete', type: 'offer' },
-            iceGatheringState: 'new',
-            set onicegatheringstatechange(callback: () => void) {
-                iceCallback = callback;
-                // Simulate ICE completion after a short delay
-                setTimeout(() => {
-                    // @ts-ignore
-                    this.iceGatheringState = 'complete';
-                    if (iceCallback) iceCallback();
-                }, 10);
-            },
-        };
-    }),
-    RTCSessionDescription: jest.fn(),
-    RTCSessionDescriptionInit: jest.fn(),
+// Mock fetch for inference client
+const mockFetch = jest.fn();
+global.fetch = mockFetch as jest.Mock;
+
+// Mock InferenceClient module
+jest.mock('../src/services/InferenceClient', () => ({
+    startDetectionPolling: jest.fn(),
+    stopDetectionPolling: jest.fn(),
+    setRemoteModel: jest.fn(),
 }));
 
-// Mock Fetch
-global.fetch = jest.fn(() =>
-    Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ type: 'answer', sdp: 'mock-answer' }),
-    })
-) as jest.Mock;
-
-describe('WebRTC Integration Flow (HTTP Signaling)', () => {
-    let client: WebRTCClient;
-
+describe('Inference Integration', () => {
     beforeEach(() => {
-        useAppStore.setState({ connectionStatus: 'disconnected' });
-        jest.clearAllMocks();
-        client = new WebRTCClient('http://test-url/offer');
+        mockFetch.mockClear();
+        useAppStore.setState({
+            activeModel: 'cone',
+            inferenceEnabled: true,
+            detections: [],
+            isConeCollisionRisk: false,
+        });
     });
 
-    it('should connect via HTTP POST and update status', async () => {
-        expect(useAppStore.getState().connectionStatus).toBe('disconnected');
+    it('should process detection results from /detections endpoint', () => {
+        const mockDetections = [
+            { class: 'cone' as const, confidence: 0.85, x: 0.32, y: 0.45, w: 0.12, h: 0.18 },
+            { class: 'cone' as const, confidence: 0.72, x: 0.61, y: 0.55, w: 0.1, h: 0.15 },
+        ];
 
-        await act(async () => {
-            await client.connect();
+        act(() => {
+            useAppStore.getState().updateDetections(mockDetections);
         });
 
-        // Verify Fetch was called
-        expect(global.fetch).toHaveBeenCalledWith('http://test-url/offer', expect.objectContaining({
-            method: 'POST',
-            body: expect.stringContaining('"type":"offer"'),
-        }));
+        const state = useAppStore.getState();
+        expect(state.detections).toHaveLength(2);
+        expect(state.detections[0].class).toBe('cone');
+        expect(state.detections[0].confidence).toBe(0.85);
+    });
 
-        // Verify Connection Status
-        expect(useAppStore.getState().connectionStatus).toBe('connected');
+    it('should handle model switch correctly', () => {
+        expect(useAppStore.getState().activeModel).toBe('cone');
+
+        act(() => {
+            useAppStore.getState().setActiveModel('pothole');
+        });
+
+        expect(useAppStore.getState().activeModel).toBe('pothole');
+    });
+
+    it('should clear detections when inference is toggled off', () => {
+        // Add some detections
+        act(() => {
+            useAppStore.getState().updateDetections([
+                { class: 'cone' as const, confidence: 0.9, x: 0.5, y: 0.5, w: 0.1, h: 0.1 },
+            ]);
+        });
+        expect(useAppStore.getState().detections).toHaveLength(1);
+
+        // Toggle inference off
+        act(() => {
+            useAppStore.getState().toggleInference();
+        });
+        expect(useAppStore.getState().inferenceEnabled).toBe(false);
+    });
+
+    it('should fetch detections from Pi server', async () => {
+        const mockDetections = [
+            { class: 'pothole', confidence: 0.78, x: 0.4, y: 0.6, w: 0.15, h: 0.1 },
+        ];
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(mockDetections),
+        });
+
+        const response = await fetch('http://10.165.71.121:8080/detections');
+        const data = await response.json();
+
+        expect(data).toHaveLength(1);
+        expect(data[0].class).toBe('pothole');
+    });
+
+    it('should send model switch command to Pi', async () => {
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ model: 'cone' }),
+        });
+
+        await fetch('http://10.165.71.121:8080/set_model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'cone' }),
+        });
+
+        expect(mockFetch).toHaveBeenCalledWith(
+            'http://10.165.71.121:8080/set_model',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({ model: 'cone' }),
+            })
+        );
     });
 });
