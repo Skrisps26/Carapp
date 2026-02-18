@@ -1,89 +1,113 @@
 import React, { useRef, useEffect } from 'react';
-import { View, StyleSheet, Dimensions } from 'react-native';
-import MapView, { Marker, Polyline, UrlTile, PROVIDER_DEFAULT } from 'react-native-maps';
+import { View, StyleSheet } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { useAppStore } from '../store/useAppStore';
 
-const { width, height } = Dimensions.get('window');
-
 const MapDashboard: React.FC = () => {
-    const mapRef = useRef<MapView>(null);
+    const webRef = useRef<WebView>(null);
     const mapState = useAppStore((state) => state.mapState);
 
-    // Follow user mode
+    // Push location updates to Leaflet map
     useEffect(() => {
-        if (mapRef.current && mapState.latitude !== 0) {
-            mapRef.current.animateCamera({
-                center: {
-                    latitude: mapState.latitude,
-                    longitude: mapState.longitude,
-                },
-                heading: mapState.heading,
-                pitch: 0,
-                zoom: 17,
-                altitude: 1000 // Zoom level approximation
-            }, { duration: 500 });
+        if (webRef.current && mapState.latitude !== 0) {
+            webRef.current.injectJavaScript(`
+                updatePosition(${mapState.latitude}, ${mapState.longitude}, ${mapState.heading});
+                true;
+            `);
         }
     }, [mapState.latitude, mapState.longitude, mapState.heading]);
 
+    // Push path history updates
+    useEffect(() => {
+        if (webRef.current && mapState.pathHistory.length > 0) {
+            const coords = JSON.stringify(mapState.pathHistory);
+            webRef.current.injectJavaScript(`
+                updatePath(${coords});
+                true;
+            `);
+        }
+    }, [mapState.pathHistory.length]);
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; }
+        html, body, #map { width: 100%; height: 100%; background: #1a1a2e; }
+        .leaflet-control-attribution { display: none !important; }
+        .leaflet-control-zoom { display: none !important; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script>
+        var map = L.map('map', {
+            center: [0, 0],
+            zoom: 17,
+            zoomControl: false,
+            attributionControl: false,
+        });
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+        }).addTo(map);
+
+        // Vehicle marker — cyan circle with direction arrow
+        var vehicleIcon = L.divIcon({
+            className: '',
+            html: '<div style="width:18px;height:18px;background:cyan;border:2px solid white;border-radius:50%;box-shadow:0 0 8px cyan;"></div>',
+            iconSize: [22, 22],
+            iconAnchor: [11, 11],
+        });
+
+        var marker = null;
+        var pathLine = null;
+        var initialized = false;
+
+        function updatePosition(lat, lng, heading) {
+            if (!marker) {
+                marker = L.marker([lat, lng], { icon: vehicleIcon }).addTo(map);
+                map.setView([lat, lng], 17);
+                initialized = true;
+            } else {
+                marker.setLatLng([lat, lng]);
+                map.panTo([lat, lng], { animate: true, duration: 0.5 });
+            }
+        }
+
+        function updatePath(coords) {
+            var latlngs = coords.map(function(c) { return [c.latitude, c.longitude]; });
+            if (pathLine) {
+                pathLine.setLatLngs(latlngs);
+            } else {
+                pathLine = L.polyline(latlngs, {
+                    color: '#00FF00',
+                    weight: 3,
+                    opacity: 0.8,
+                }).addTo(map);
+            }
+        }
+    </script>
+</body>
+</html>
+    `;
+
     return (
         <View style={styles.container}>
-            <MapView
-                ref={mapRef}
-                provider={PROVIDER_DEFAULT}
-                style={styles.map}
-                mapType="none" // We use custom tiles
-                rotateEnabled={false} // Keep North Up as requested? Quote: "Map orientation fixed (north-up)" -> rotateEnabled={false}
-                scrollEnabled={true}
-                zoomEnabled={true}
-                initialRegion={{
-                    latitude: 37.78825, // Default SF
-                    longitude: -122.4324,
-                    latitudeDelta: 0.01,
-                    longitudeDelta: 0.01,
-                }}
-            >
-                <UrlTile
-                    /**
-                     * OpenStreetMap Tile Server
-                     * Format: https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
-                     * Note: In production, you might want to use a specific tile provider or cache.
-                     */
-                    urlTemplate="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    maximumZ={19}
-                    flipY={false}
-                />
-
-                {/* Vehicle Marker */}
-                {mapState.latitude !== 0 && (
-                    <Marker
-                        coordinate={{
-                            latitude: mapState.latitude,
-                            longitude: mapState.longitude
-                        }}
-                        anchor={{ x: 0.5, y: 0.5 }}
-                        flat={true} // Rotates with map if map rotates, but here map is fixed north up.
-                        rotation={mapState.heading}
-                    >
-                        {/* Simple Arrow or Dot for Vehicle. Using a View for custom high contrast marker */}
-                        <View style={styles.vehicleMarker}>
-                            <View style={styles.arrow} />
-                        </View>
-                    </Marker>
-                )}
-
-                {/* Path History */}
-                <Polyline
-                    coordinates={mapState.pathHistory}
-                    strokeColor="#00FF00" // High contrast green
-                    strokeWidth={4}
-                />
-
-            </MapView>
-
-            {/* Range Overlay on Map */}
-            <View style={styles.overlay}>
-
-            </View>
+            <WebView
+                ref={webRef}
+                source={{ html }}
+                style={styles.webview}
+                javaScriptEnabled={true}
+                scrollEnabled={false}
+                overScrollMode="never"
+                originWhitelist={['*']}
+                mixedContentMode="always"
+            />
         </View>
     );
 };
@@ -92,42 +116,15 @@ const styles = StyleSheet.create({
     container: {
         width: '100%',
         height: '100%',
-        borderRadius: 15,
-        overflow: 'hidden',
-        borderWidth: 2,
-        borderColor: '#333',
-    },
-    map: {
-        flex: 1,
-    },
-    vehicleMarker: {
-        width: 20,
-        height: 20,
-        backgroundColor: 'cyan',
         borderRadius: 10,
-        borderWidth: 2,
-        borderColor: 'white',
-        alignItems: 'center',
-        justifyContent: 'center',
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: '#444',
     },
-    arrow: {
-        width: 0,
-        height: 0,
-        backgroundColor: 'transparent',
-        borderStyle: 'solid',
-        borderLeftWidth: 5,
-        borderRightWidth: 5,
-        borderBottomWidth: 10,
-        borderLeftColor: 'transparent',
-        borderRightColor: 'transparent',
-        borderBottomColor: 'blue',
-        transform: [{ translateY: -2 }]
+    webview: {
+        flex: 1,
+        backgroundColor: '#1a1a2e',
     },
-    overlay: {
-        position: 'absolute',
-        bottom: 10,
-        left: 10,
-    }
 });
 
 export default MapDashboard;

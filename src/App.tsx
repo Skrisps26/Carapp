@@ -1,6 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { StyleSheet, View, Text, StatusBar, SafeAreaView } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
+import * as Location from 'expo-location';
 import { MjpegView } from './components/MjpegView';
 import { DetectionOverlay } from './components/DetectionOverlay';
 import TelemetryDashboard from './components/TelemetryDashboard';
@@ -16,6 +17,7 @@ export default function App() {
     useKeepAwake();
     const inferenceEnabled = useAppStore(state => state.inferenceEnabled);
     const activeModel = useAppStore(state => state.activeModel);
+    const locationSub = useRef<Location.LocationSubscription | null>(null);
 
     // Start/stop detection polling
     useEffect(() => {
@@ -35,6 +37,36 @@ export default function App() {
             setRemoteModel(activeModel);
         }
     }, [activeModel]);
+
+    // GPS Location Watcher
+    useEffect(() => {
+        (async () => {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                console.warn('Location permission denied');
+                return;
+            }
+
+            locationSub.current = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.High,
+                    timeInterval: 1000,
+                    distanceInterval: 1,
+                },
+                (loc) => {
+                    useAppStore.getState().updateMapState({
+                        latitude: loc.coords.latitude,
+                        longitude: loc.coords.longitude,
+                        heading: loc.coords.heading ?? 0,
+                    });
+                }
+            );
+        })();
+
+        return () => {
+            locationSub.current?.remove();
+        };
+    }, []);
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar hidden />
