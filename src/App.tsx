@@ -10,8 +10,9 @@ import MapDashboard from './components/MapDashboard';
 import { useAppStore } from './store/useAppStore';
 import { startDetectionPolling, stopDetectionPolling, setRemoteModel } from './services/InferenceClient';
 
-// Pi MJPEG server
-const PI_URL = "http://10.165.71.121:8080";
+// Pi MJPEG servers
+const PI_FRONT_URL = "http://192.168.92.121:8080";
+const PI_REAR_URL = "http://192.168.92.121:8081";
 
 export default function App() {
     useKeepAwake();
@@ -19,6 +20,11 @@ export default function App() {
     const activeModel = useAppStore(state => state.activeModel);
     const locationSub = useRef<Location.LocationSubscription | null>(null);
     const [hudVisible, setHudVisible] = useState(true);
+    const [activeCamera, setActiveCamera] = useState<'front' | 'rear' | 'frontRaw'>('front');
+
+    let piUrl = PI_FRONT_URL;
+    if (activeCamera === 'rear') piUrl = PI_REAR_URL;
+    // frontRaw also uses PI_FRONT_URL because the server already serves raw frames.
 
     // Start/stop detection polling
     useEffect(() => {
@@ -75,13 +81,15 @@ export default function App() {
 
             {/* 1. Video — full screen, always visible */}
             <View style={styles.videoLayer}>
-                <MjpegView url={PI_URL} />
+                <MjpegView url={piUrl} />
             </View>
 
-            {/* 2. Detection overlay — always visible */}
-            <View style={styles.overlayLayer}>
-                <DetectionOverlay />
-            </View>
+            {/* 2. Detection overlay — front camera only */}
+            {activeCamera === 'front' && (
+                <View style={styles.overlayLayer}>
+                    <DetectionOverlay />
+                </View>
+            )}
 
             {/* 3. HUD Layer — togglable */}
             <View style={styles.hudLayer}>
@@ -103,6 +111,28 @@ export default function App() {
                         <View style={styles.statusBadge}>
                             <View style={styles.statusDot} />
                             <Text style={styles.statusText}>LIVE</Text>
+                        </View>
+
+                        {/* Top-center: camera toggle */}
+                        <View style={styles.cameraToggleRow}>
+                            <TouchableOpacity
+                                style={[styles.camPill, activeCamera === 'front' ? styles.camActive : styles.camInactive]}
+                                onPress={() => setActiveCamera('front')}
+                            >
+                                <Text style={styles.camPillText}>▶ FRONT</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.camPill, activeCamera === 'frontRaw' ? styles.camActive : styles.camInactive]}
+                                onPress={() => setActiveCamera('frontRaw')}
+                            >
+                                <Text style={styles.camPillText}>▶ FRONT RAW</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.camPill, activeCamera === 'rear' ? styles.camActive : styles.camInactive]}
+                                onPress={() => setActiveCamera('rear')}
+                            >
+                                <Text style={styles.camPillText}>◀ REAR</Text>
+                            </TouchableOpacity>
                         </View>
 
                         {/* Bottom-left: telemetry */}
@@ -211,5 +241,33 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.15)',
         marginBottom: 8,
+    },
+
+    /* Camera toggle — top-center */
+    cameraToggleRow: {
+        position: 'absolute',
+        top: 10,
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 6,
+    },
+    camPill: {
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 14,
+    },
+    camActive: {
+        backgroundColor: 'rgba(0,122,255,0.85)',
+    },
+    camInactive: {
+        backgroundColor: 'rgba(40,40,40,0.7)',
+    },
+    camPillText: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 11,
+        letterSpacing: 0.5,
     },
 });

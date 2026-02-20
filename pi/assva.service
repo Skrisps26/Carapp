@@ -1,0 +1,15 @@
+[Unit]
+Description=ASSVA Camera Server
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/assva/pi
+ExecStart=/home/pi/assva/pi/venv/bin/python /home/pi/assva/pi/server.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

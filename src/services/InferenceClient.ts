@@ -1,6 +1,6 @@
 import { useAppStore } from '../store/useAppStore';
 
-const PI_URL = "http://10.165.71.121:8080";
+const PI_URL = "http://192.168.92.121:8080";
 
 let pollingActive = false;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;

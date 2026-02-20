@@ -1,6 +1,8 @@
 # MacOS
 .DS_Store
 
+./ASSVA.apk
+
 # Node modules
 node_modules/
 
